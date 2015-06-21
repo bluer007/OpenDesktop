@@ -4,6 +4,12 @@
 	用途: 自动检测硬盘上所有分区, 并打开用户桌面目录
 	作者: bluer
 	邮箱: 905750221@qq.com
+
+	程序原理: 
+		检索硬盘上所有分区, 检测该分区是否系统分区, 如果是, 则查找该系统分区是否有没有被排除的用户目录, 
+		如果有, 则打开该用户桌面, 如果系统分区没有用户桌面, 则查找非系统分区是否有用户目录, 如果有, 则
+		打开该用户桌面
+
 */
 
 
@@ -34,6 +40,7 @@ public:
 	COpenDesktop();
 	~COpenDesktop();
 
+	INT m_isOpenExplorer;					//是否在打开用户桌面后, 又打开一个新的资源管理器
 	INT OpenDesktop();
 	INT IsSysDrive(LPCTSTR drive);
 	tstring& FindUserFile(const tstring& path);
@@ -52,28 +59,32 @@ private:
 	deque<tstring> m_sysDrvDesktopPath;		//存储系统分区用户桌面路径
 	deque<tstring> m_notSysDrvDesktopPath;	//存储非系统分区用户桌面路径
 
-	static const LPTSTR SYS_FILE[2];
-	static const PTSTR SYS_USER_FILE[2];
-	static const LPTSTR CONFIG_FILE;
+	static const LPTSTR SYS_FILE[2];		//用于判断是否系统分区的特定文件
+	static const PTSTR SYS_USER_FILE[2];	//用户文件夹的父目录
+	static const LPTSTR CONFIG_FILE;		//设置文件, 记录了要排除的系统用户名
 	static const LPTSTR DEFAULT_SYS_USER;	//默认系统用户
 };
 
-const LPTSTR COpenDesktop::CONFIG_FILE = TEXT("桌面快开设置.txt");
+const LPTSTR COpenDesktop::CONFIG_FILE = TEXT("桌面快开设置.txt");		//设置文件, 记录了要排除的系统用户名
 const LPTSTR COpenDesktop::DEFAULT_SYS_USER = TEXT("administrator");	//默认系统用户
 
 const LPTSTR COpenDesktop::SYS_FILE[2] =
 {
+	//用于判断是否系统分区的特定文件
 	TEXT("Windows\\System32\\cmd.exe"),
 	TEXT("Windows\\explorer.exe")
 };
 
 const LPTSTR COpenDesktop::SYS_USER_FILE[2] =
 {
+	//用户文件夹的父目录
 	TEXT("Users"),
 	TEXT("Documents and Settings")
 };
 
-COpenDesktop::COpenDesktop() : OldRedirectionValue(NULL)
+COpenDesktop::COpenDesktop() : 
+	OldRedirectionValue(NULL), 
+	m_isOpenExplorer(FALSE)			//默认在打开用户桌面后, 不打开一个新的资源管理器
 {
 	//获取对system32目录操作的权限
 	//Wow64DisableWow64FsRedirection(&OldRedirectionValue);
@@ -90,6 +101,8 @@ INT COpenDesktop::ShellExe(
 	TCHAR* parameters, INT show, INT timeout,
 	_Out_ HANDLE* hProcess)
 {
+	//函数按传进来的参数运行自定义的程序
+
 	//该函数是阻塞型函数
 	TCHAR m_path[MAX_PATH + 1] = { 0 };
 	if (!_tcscmp(path, TEXT("%temp%"))
@@ -120,7 +133,7 @@ INT COpenDesktop::ShellExe(
 	sei.lpDirectory = m_path;
 	sei.nShow = show;		//SW_HIDE;SW_NORMAL
 	sei.hInstApp = NULL;
-	ShellExecuteEx(&sei);
+	ShellExecuteEx(&sei);	//运行进程
 	//   加入下面这句就是等待该进程结束 
 	if(hProcess)
 		*hProcess = sei.hProcess;
@@ -201,6 +214,8 @@ tstring& COpenDesktop::FindUserFile(const tstring& path)
 
 INT COpenDesktop::OpenDesktop()
 {
+	//函数用于检测硬盘分区, 并打开桌面目录
+
 	TCHAR Drive[MAX_PATH] = { 0 };
 	DWORD len = ::GetLogicalDriveStrings(sizeof(Drive) / sizeof(TCHAR), Drive);
 	if (len <= 0)
@@ -212,6 +227,7 @@ INT COpenDesktop::OpenDesktop()
 
 	DWORD i = 0;
 	tstring path, user, desktoppath;
+	//开始逐个分区检查是否有桌面目录
 	while (Drive[i])
 	{
 		tcout << endl << TEXT("开始检查: ") << Drive[i]<<TEXT(" 盘") << endl;
@@ -224,6 +240,7 @@ INT COpenDesktop::OpenDesktop()
 			if (!this->FindFileExist(path.c_str(), true))
 				continue;
 
+			//检测该分区中是否有 有效的用户目录
 			if ((user = this->FindUserFile(path)).compare(TEXT("")))
 			{
 				int begin = 0, end = 0;
@@ -240,7 +257,7 @@ INT COpenDesktop::OpenDesktop()
 						//Documents and Settings目录下用户桌面是"桌面"
 						desktoppath = desktoppath + TEXT("桌面");
 					}
-					//根据是否系统分区存储桌面路径
+					//根据是否 系统分区 来存储 桌面路径
 					if (this->IsSysDrive(&Drive[i]))
 						m_sysDrvDesktopPath.push_back(desktoppath);
 					else
@@ -257,10 +274,21 @@ INT COpenDesktop::OpenDesktop()
 
 	tcout << endl;
 	//至此, 用户桌面寻找完毕, 开始打开桌面
+	//假如系统分区中有桌面目录,则打开, 没有才打开非系统分区的桌面目录
+
+	if (this->m_isOpenExplorer &&
+		(this->m_sysDrvDesktopPath.size() > 0 ||
+		this->m_notSysDrvDesktopPath.size() > 0))
+	{
+		this->ShellExe(TEXT("open"), TEXT("explorer.exe"), TEXT("%windir%"),
+			TEXT(""), SW_NORMAL, 1000, NULL);
+	}
+
 	tstring parameters;
 	deque<tstring>::iterator it;
 	if (this->m_sysDrvDesktopPath.size() > 0)
 	{
+		//假如系统分区中有桌面目录,则打开
 		for (it = this->m_sysDrvDesktopPath.begin(); 
 				it != this->m_sysDrvDesktopPath.end(); 
 				it++)
@@ -274,6 +302,7 @@ INT COpenDesktop::OpenDesktop()
 	}
 	else if(this->m_notSysDrvDesktopPath.size() > 0)
 	{
+		// 系统分区没有桌面目录, 才打开非系统分区的桌面目录
 		for (it = this->m_notSysDrvDesktopPath.begin();
 		it != this->m_notSysDrvDesktopPath.end();
 			it++)
@@ -286,16 +315,21 @@ INT COpenDesktop::OpenDesktop()
 	}
 	else
 	{
+		//系统分区和非系统分区都没有桌面目录, 进行提醒
 		tcout << TEXT("\n\n很遗憾, 找不到用户桌面目录") << endl;
 		MessageBox(NULL, TEXT("很遗憾, 找不到用户桌面目录"), TEXT("提醒"), MB_OK);
 		return FALSE;
 	}
-
+	
 	return TRUE;
 }
 
 tstring& COpenDesktop::TransformStr(tstring& str, bool tolower /*= true*/)
 {
+	//函数将传入的str字符串中全部转成大/小写, 
+	//tolower为true表示转成小写, 否则转成大写, 
+	//函数返回转换成功的字符串
+
 	tstring::iterator it;
 	//转换大小写
 	for (it = str.begin(); it != str.end(); it++)
@@ -318,6 +352,7 @@ tstring& COpenDesktop::TransformStr(tstring& str, bool tolower /*= true*/)
 
 INT COpenDesktop::IsSysDrive(LPCTSTR drive)
 {
+	//函数判断传入的drive分区, 是否系统分区
 	//drive应该是D:\等
 	tstring path(drive);
 	for (int i = sizeof(SYS_FILE) / sizeof(SYS_FILE[0]); i; i--)
@@ -333,6 +368,8 @@ INT COpenDesktop::IsSysDrive(LPCTSTR drive)
 
 INT COpenDesktop::FindFileExist(LPCTSTR fileName, bool isFolder)
 {
+	//寻找文件/文件夹是否存在, 存在返回true, 否则false
+	//fileName是文件/夹的长路径, isFolder表示是否文件夹
 	WIN32_FIND_DATA fd = { 0 };
 	DWORD dwFilter = FALSE;
 	if (isFolder) dwFilter = FILE_ATTRIBUTE_DIRECTORY;
@@ -346,7 +383,7 @@ INT COpenDesktop::FindFileExist(LPCTSTR fileName, bool isFolder)
 
 TCHAR* COpenDesktop::Trim(const TCHAR *str)
 {
-	//去掉字符串两边的空格
+	//去掉字符串两边的空格, 并返回去掉两边空格后的字符串
 	static TCHAR line[MAX_PATH];
 	const TCHAR *pbegin;
 	TCHAR *p = NULL, *pend = NULL;
@@ -370,7 +407,9 @@ TCHAR* COpenDesktop::Trim(const TCHAR *str)
 
 BOOL COpenDesktop::ReadSpecialFile()
 {
-	//打开文件
+	//函数用户读取设置文件, 并返回是否读取成功
+
+	//打开设置文件
 	tifstream rfile(CONFIG_FILE, std::ios::in);
 	if (!rfile)
 	{
@@ -382,6 +421,7 @@ BOOL COpenDesktop::ReadSpecialFile()
 	tstring str(100, TEXT('\0'));
 	std::cout << "开始读取设置文件\n要排除的系统用户目录如下:" << std::endl;
 	int i = 0;
+	//读取要排除的系统用户名
 	while (getline(rfile, str))		//每次读一行, 以\n  换行符结束
 	{
 		std::wcout << str.c_str() << std::endl;
@@ -399,13 +439,28 @@ BOOL COpenDesktop::ReadSpecialFile()
 
 
 
-void main()
+int main(int argc, char *argv[], char *envp[])
 {
+	COpenDesktop my;
+	for (int i = argc; i; i--)
+	{
+		if (strcmp(argv[i - 1], "/explorer") == 0)
+		{
+			my.m_isOpenExplorer = TRUE;
+			break;
+		}
+	}
+
+	//试着字符集, 使wcont能顺利输出字符
 	std::wcout.imbue(std::locale("chinese"));
 	tcout << TEXT("---++++++---欢迎使用 计算机协会 桌面快开 v1.0---++++++---") << endl << endl;
-	COpenDesktop my;
+
+	//读取设置文件, 设置要排除的系统用户名
 	my.ReadSpecialFile();
+	//根据设置, 开始检索硬盘分区, 并打开找到的用户桌面
 	my.OpenDesktop();
+	
+	return 0;
 }
 
 

@@ -1,4 +1,3 @@
-#以下列表是要被排除的系统内置用户名,可以手动补充,一行一个
 Administrator
 Public
 defaultuser0
