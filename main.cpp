@@ -409,8 +409,19 @@ BOOL COpenDesktop::ReadSpecialFile()
 {
 	//函数用户读取设置文件, 并返回是否读取成功
 
+	TCHAR szMoudlePath[MAX_PATH];
+	GetModuleFileName(NULL, szMoudlePath, MAX_PATH);
+	int j = _tcslen(szMoudlePath);
+	while (szMoudlePath[j - 1] && szMoudlePath[j - 1] != '\\')
+	{
+		j--;
+	}
+	szMoudlePath[j] = '\0';
+	tstring fullPuth(szMoudlePath);
+	fullPuth.append(CONFIG_FILE);
+	
 	//打开设置文件
-	tifstream rfile(CONFIG_FILE, std::ios::in);
+	tifstream rfile(fullPuth.c_str(), std::ios::in);
 	if (!rfile)
 	{
 		std::cout << "错误:打不开设置文件" << std::endl;
